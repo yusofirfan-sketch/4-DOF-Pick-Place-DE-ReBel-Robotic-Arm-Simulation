@@ -1,0 +1,149 @@
+% Project Robotics Fanuc 4-DOF: 3D Objects Fixed Stay Logic
+clear; clc; close all;
+
+% 1. Physical Parameters (mm) 
+d1 = 742; a1 = 260; a2 = 945; a3 = 1025; a4 = 220; d4 = 252;
+
+% 2. Target Coordinates [Px, Py, Pz]
+Rest_coord   = [a1+a2+a3, 0, d1+d4];
+WP1_coord    = [-200, 20, 370.5];    
+Rack2_coord  = [-180, 70, 550];     
+WP2_coord    = [-200, 250, 370.5];   % <--- Aku ubah Y jadi 250 supaya nampak jarak sikit. Kalau nak nilai asal, tukar balik jadi 50.
+Rack15_coord = [180, 70, 500];      
+
+targets = {Rest_coord, WP1_coord, Rack2_coord, WP2_coord, Rack15_coord};
+q_pts = zeros(5, 4);
+
+% 3. Inverse Kinematics (IK)
+for i = 1:5
+    Px = targets{i}(1); Py = targets{i}(2); Pz = targets{i}(3);
+    th1 = atan2(Py, Px);
+    dist_xy = sqrt(Px^2 + Py^2);
+    R = dist_xy - a1;
+    Z_eff = Pz - d1 - d4;
+    dist_sq = R^2 + Z_eff^2;
+    cos_th3 = max(min((dist_sq - a2^2 - a3^2) / (2 * a2 * a3), 1), -1);
+    th3 = acos(cos_th3);
+    th2 = atan2(Z_eff, R) + atan2(a3*sin(th3), a2 + a3*cos(th3));
+    th4 = -(th2 + th3);
+    q_pts(i, :) = [rad2deg(th1), rad2deg(th2), rad2deg(th3), rad2deg(th4)];
+end
+q_pts(1, :) = [0, 0, 0, 0]; 
+
+% 4. Trajectory Generation (0-20s)
+T = 5; dt = 0.1;
+t_total = 0:dt:20;
+Q_sim = [];
+for j = 1:4
+    a2_1 = (3/T^2)*(q_pts(2,j)-q_pts(1,j)); a3_1 = (-2/T^3)*(q_pts(2,j)-q_pts(1,j));
+    q_f1 = q_pts(1,j) + a2_1*(0:dt:T).^2 + a3_1*(0:dt:T).^3;
+    a2_2 = (3/T^2)*(q_pts(3,j)-q_pts(2,j)); a3_2 = (-2/T^3)*(q_pts(3,j)-q_pts(2,j));
+    q_f2 = q_pts(2,j) + a2_2*(dt:dt:T).^2 + a3_2*(dt:dt:T).^3;
+    a2_3 = (3/T^2)*(q_pts(4,j)-q_pts(3,j)); a3_3 = (-2/T^3)*(q_pts(4,j)-q_pts(3,j));
+    q_f3 = q_pts(3,j) + a2_3*(dt:dt:T).^2 + a3_3*(dt:dt:T).^3;
+    a2_4 = (3/T^2)*(q_pts(5,j)-q_pts(4,j)); a3_4 = (-2/T^3)*(q_pts(5,j)-q_pts(4,j));
+    q_f4 = q_pts(4,j) + a2_4*(dt:dt:T).^2 + a3_4*(dt:dt:T).^3;
+    Q_sim(:,j) = [q_f1, q_f2, q_f3, q_f4]';
+end
+
+% 5. Print Table to Command Window
+fprintf('====================================================================================\n');
+fprintf(' Time (t) | th1 (deg) | th2 (deg) | th3 (deg) | th4 (deg) |         Status          \n');
+fprintf('------------------------------------------------------------------------------------\n');
+for t_idx = 0:20
+    idx = find(abs(t_total - t_idx) < 1e-5, 1); q_row = Q_sim(idx, :);
+    if t_idx == 0, status = 'REST (HOME)';
+    elseif t_idx < 5, status = 'Moving to WP1';
+    elseif t_idx == 5, status = 'AT WP1 (PICK)';
+    elseif t_idx < 10, status = 'Moving to RACK 2';
+    elseif t_idx == 10, status = 'AT RACK 2 (PLACE)';
+    elseif t_idx < 15, status = 'Moving to WP2';
+    elseif t_idx == 15, status = 'AT WP2 (PICK)';
+    elseif t_idx < 20, status = 'Moving to RACK 15';
+    elseif t_idx == 20, status = 'AT RACK 15 (PLACE)'; end
+    fprintf('   %2ds      | %8.2f  | %8.2f  | %8.2f  | %8.2f  |  %s \n', t_idx, q_row(1), q_row(2), q_row(3), q_row(4), status);
+end
+fprintf('====================================================================================\n');
+
+% 6. Plotting Graphs
+figure('Name', 'Joint Trajectories (0-20s)');
+for j = 1:4
+    subplot(2,2,j);
+    plot(t_total, Q_sim(:,j), 'LineWidth', 2, 'Color', [0 .45 .74]);
+    grid on; title(['Joint ', num2str(j)]); xlabel('Time (s)'); ylabel('Angle (deg)');
+end
+
+% 7. 3D Simulation
+figure('Name', 'Fanuc 4-DOF Simulation: Continuous Pick & Place', 'Color', 'w');
+hold on; grid on; axis equal; view(3);
+xlim([-1500 1500]); ylim([-1000 1000]); zlim([0 2000]);
+xlabel('X (mm)'); ylabel('Y (mm)'); zlabel('Z (mm)');
+h_arm = plot3(0,0,0, '-o', 'LineWidth', 6, 'Color', [0.2 0.2 0.2], 'MarkerFaceColor', 'y');
+h_info = text(-1400, 0, 1800, '', 'FontSize', 10, 'FontWeight', 'bold');
+
+% Plot Racks Marker (Bagi nampak lokasi rak)
+plot3(Rack2_coord(1), Rack2_coord(2), Rack2_coord(3), 'gx', 'MarkerSize', 12, 'LineWidth', 2);
+plot3(Rack15_coord(1), Rack15_coord(2), Rack15_coord(3), 'mx', 'MarkerSize', 12, 'LineWidth', 2);
+
+% Create Sphere Geometry
+[sx, sy, sz] = sphere(20);
+radius = 40; 
+
+% Plot Awal Posisi Objek
+h_wp1 = surf(sx*radius + WP1_coord(1), sy*radius + WP1_coord(2), sz*radius + WP1_coord(3), ...
+    'FaceColor', 'g', 'EdgeColor', 'none', 'FaceAlpha', 0.8);
+h_wp2 = surf(sx*radius + WP2_coord(1), sy*radius + WP2_coord(2), sz*radius + WP2_coord(3), ...
+    'FaceColor', 'r', 'EdgeColor', 'none', 'FaceAlpha', 0.8);
+
+camlight; lighting gouraud; 
+
+% Animation Loop
+for k = 1:length(t_total)
+    q = deg2rad(Q_sim(k,:));
+    currT = t_total(k);
+    
+    % Forward Kinematics
+    p0 = [0, 0, 0]; p1 = [0, 0, d1];
+    p2 = p1 + [a1*cos(q(1)), a1*sin(q(1)), 0];
+    p3 = p2 + [a2*cos(q(1))*cos(q(2)), a2*sin(q(1))*cos(q(2)), a2*sin(q(2))];
+    p4 = p3 + [a3*cos(q(1))*cos(q(2)+q(3)), a3*sin(q(1))*cos(q(2)+q(3)), a3*sin(q(2)+q(3))];
+    p5_x = cos(q(1))*(a3*cos(q(2)+q(3)) + a2*cos(q(2)) + a1) + d4*sin(q(1));
+    p5_y = sin(q(1))*(a3*cos(q(2)+q(3)) + a2*cos(q(2)) + a1) - d4*cos(q(1));
+    p5_z = a3*sin(q(2)+q(3)) + a2*sin(q(2)) + d4*cos(q(2)+q(3)) + d1;
+    p5 = [p5_x, p5_y, p5_z];
+    
+    % --- LOGIK FIX: PEMASANGAN OBJEK MASA REAL-TIME ---
+    % Logik untuk WP1 (Hijau)
+    if currT <= 5
+        % Fasa 1: WP1 duduk diam kat tempat asal
+        set(h_wp1, 'XData', sx*radius + WP1_coord(1), 'YData', sy*radius + WP1_coord(2), 'ZData', sz*radius + WP1_coord(3));
+    elseif currT > 5 && currT <= 10
+        % Fasa 2: WP1 melekat pada gripper robot (p5)
+        set(h_wp1, 'XData', sx*radius + p5(1), 'YData', sy*radius + p5(2), 'ZData', sz*radius + p5(3));
+    else
+        % Fasa 3 & 4: WP1 kekal/stay kat Rack 2 sampai habis simulasi
+        set(h_wp1, 'XData', sx*radius + Rack2_coord(1), 'YData', sy*radius + Rack2_coord(2), 'ZData', sz*radius + Rack2_coord(3));
+    end
+    
+    % Logik untuk WP2 (Merah)
+    if currT <= 15
+        % Fasa 1, 2, 3: WP2 duduk diam kat tempat asal dia
+        set(h_wp2, 'XData', sx*radius + WP2_coord(1), 'YData', sy*radius + WP2_coord(2), 'ZData', sz*radius + WP2_coord(3));
+    elseif currT > 15 && currT <= 20
+        % Fasa 4: WP2 melekat pada gripper robot (p5)
+        set(h_wp2, 'XData', sx*radius + p5(1), 'YData', sy*radius + p5(2), 'ZData', sz*radius + p5(3));
+    end
+    
+    % Update Robot Arm
+    set(h_arm, 'XData', [p0(1) p1(1) p2(1) p3(1) p4(1) p5(1)], ...
+               'YData', [p0(2) p1(2) p2(2) p3(2) p4(2) p5(2)], ...
+               'ZData', [p0(3) p1(3) p2(3) p3(3) p4(3) p5(3)]);
+    
+    % Update Text Status
+    if currT <= 5, s_t = 'HOME -> WP1'; elseif currT <= 10, s_t = 'PICK WP1 -> RACK 2';
+    elseif currT <= 15, s_t = 'PLACE WP1 -> MOVE WP2'; else, s_t = 'PICK WP2 -> RACK 15'; end
+    set(h_info, 'String', sprintf('Time: %.1fs | %s', currT, s_t));
+    
+    drawnow;
+    pause(0.01); 
+end
