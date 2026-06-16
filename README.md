@@ -16,3 +16,5 @@ A MATLAB-based robotic simulation of a 4-DOF Industrial Fanuc Robot Arm executin
 1. Open MATLAB (R2020a or later recommended).
 2. Download and place `main_simulation.m` in your MATLAB directory.
 3. Click **Run** to execute the 3D continuous simulation, plot the joint graphs, and output the tracking table.
+
+<img width="800" height="505" alt="gif" src="https://github.com/user-attachments/assets/8834e710-ae4a-47c8-88fb-4f9eb18562aa" />
